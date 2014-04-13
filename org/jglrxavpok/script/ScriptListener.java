@@ -1,5 +1,7 @@
 package org.jglrxavpok.script;
 
+import org.jglrxavpok.script.security.ScriptSecurity.Permissions;
+
 /**
 @author jglrxavpok
 <br/>
@@ -33,4 +35,6 @@ public interface ScriptListener
     public void onDownloaded(byte[] buffer, int bytesRead, int index, int max);
 
     public String formatArg(String string);
+
+    public boolean onPermissionRequested(Permissions permissions);
 }

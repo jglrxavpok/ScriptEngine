@@ -12,7 +12,7 @@ public class ScriptTest
 
     public static void main(String[] args) throws Exception
     {
-        Script script = new Script(IO.readString(ScriptTest.class.getResourceAsStream("/org/jglrxavpok/script/test/script.txt"), "UTF-8"));
+        Script script = new Script(IO.readString(ScriptTest.class.getResourceAsStream("/org/jglrxavpok/script/test/test.script"), "UTF-8"), "Test script");
         while(script.hasNext())
             script.executeNext();
     }

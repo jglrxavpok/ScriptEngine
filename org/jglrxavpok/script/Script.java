@@ -12,6 +12,11 @@ import java.net.URLClassLoader;
 import java.net.URLConnection;
 import java.util.ArrayList;
 
+import org.jglrxavpok.script.security.ScriptSecurity;
+import org.jglrxavpok.script.security.ScriptSecurity.Modes;
+import org.jglrxavpok.script.security.ScriptSecurity.Permissions;
+import org.jglrxavpok.script.security.ScriptSecurity.ScriptSecurityException;
+
 /**
 @author jglrxavpok
 <br/>
@@ -40,7 +45,7 @@ SOFTWARE.<br/>
 public class Script
 {
 
-    public static boolean DEBUG = true;
+    public static boolean DEBUG = false;
     
     
     private String script;
@@ -51,21 +56,43 @@ public class Script
     private OutputStream outStream;
     private int currentLine;
 
-
     private String scriptName;
+    private long permissions;
+    private ScriptSecurity.Modes securityMode;
 
     public Script(String script)
     {
-        this.script = script;
-        int maxIndex = 10;
-        if(maxIndex >= script.length())
-            maxIndex = script.length()-1;
-        scriptName = script.substring(0, maxIndex).trim().replace("\n", " ").replace("\r", " ");
-        this.outStream = System.out;
-        variables = new ArrayList<ScriptVariable>();
-        parseScript(script);
+        this(script, getTenFirstChars(script));
     }
     
+    private static String getTenFirstChars(String s)
+    {
+        int maxIndex = 10;
+        if(maxIndex >= s.length())
+            maxIndex = s.length()-1;
+
+        return s.substring(0, maxIndex);
+    }
+
+    public Script(String script, String name)
+    {
+        this.securityMode = Modes.ONLY_BLOCK_CRITICAL;
+        this.script = script;
+        scriptName = name;
+        this.outStream = System.out;
+        variables = new ArrayList<ScriptVariable>();
+        
+        
+        // TODO: Remove test zone
+        {
+            this.grantPermission(Permissions.DOWNLOAD);
+            System.err.println(this.hasPermission(Permissions.DOWNLOAD));
+        }
+        // TODO: Remove test zone
+        
+        parseScript(script);
+    }
+
     public Script setName(String n)
     {
         this.scriptName = n;
@@ -195,14 +222,19 @@ public class Script
         }
         if(inDoubleQuote)
         {
-            throw new ScriptParseException("Unbalanced quote at line: "+currentLine);
+            throw new ScriptParseException("Unbalanced quote at line: "+getInfo(currentLine));
         }
         else if(inSingleQuote)
         {
-            throw new ScriptParseException("Unbalanced quote at line: "+currentLine);
+            throw new ScriptParseException("Unbalanced quote at line: "+getInfo(currentLine));
         }
         list.add(current);
         return list.toArray(new String[0]);
+    }
+
+    private String getInfo(int currentLine)
+    {
+        return "(at "+scriptName+",line:"+currentLine+")";
     }
 
     public void injectIntoClasspath(URL path)
@@ -260,7 +292,7 @@ public class Script
             {
                 String name = getArg(args, 0, in.getLine(), "variable name");
                 if(name.startsWith("$"))
-                    throw new ScriptParseException("Invalid variable name: "+name+ " at ("+scriptName+",line:"+in.getLine()+")");
+                    throw new ScriptParseException("Invalid variable name: "+name+ getInfo(in.getLine()));
                 ScriptVariable var = new ScriptVariable(name);
                 register(var);
                 
@@ -273,7 +305,7 @@ public class Script
                     }
                     else
                     {
-                        throw new ScriptParseException("Expected '=' at index 1 (at "+scriptName+", line:"+in.getLine()+")");
+                        throw new ScriptParseException("Expected '=' at index 1 "+getInfo(in.getLine()));
                     }
                 }
             }
@@ -297,7 +329,7 @@ public class Script
                 ScriptVariable var = getVarByName(varName);
                 if(var == ScriptVariable.NULL_VAR)
                 {
-                    throw new ScriptParseException(varName+" is not a valid variable. (at "+scriptName+",line:"+in.getLine()+")");   
+                    throw new ScriptParseException(varName+" is not a valid variable. "+getInfo(in.getLine()));   
                 }
                 else
                 {
@@ -307,9 +339,48 @@ public class Script
                     }
                 }
             }
+            else if(instruction.equals("requestPermission"))
+            {
+                Permissions perm = Permissions.get(getArg(args, 0, in.getLine(),"permission type"));
+                if(securityMode == Modes.ANARCHY)
+                {
+                    if(perm.isCritical())
+                    {
+                       System.err.println("Script "+scriptName+" requested critical permission "+perm.getPermissionID());
+                       System.err.println("\t\tThis allows the script to have access to functions potentially dangerous");
+                    }
+                    grantPermission(perm);
+                }
+                else if(securityMode == Modes.ONLY_BLOCK_CRITICAL)
+                {
+                    if(perm.isCritical())
+                    {
+                       System.err.println("Script "+scriptName+" requested critical permission "+perm.getPermissionID()+" but this request was denied");
+                       System.err.println("\t\tThis would have allowed the script to have access to functions potentially dangerous");
+                    }
+                    else
+                        grantPermission(perm);
+                }
+                else if(securityMode == Modes.SHOULD_REQUEST)
+                {
+                    if(listener == null || listener.onPermissionRequested(perm))
+                    {
+                        if(perm.isCritical())
+                        {
+                           System.err.println("Script "+scriptName+" requested critical permission "+perm.getPermissionID());
+                           System.err.println("\t\tThis allows the script to have access to functions potentially dangerous");
+                        }
+                        this.grantPermission(perm);
+                    }
+                }
+                else if(securityMode == Modes.BLOCK_EVERYTHING)
+                {
+                    throw new ScriptSecurityException("Script "+scriptName+" requested permission for: "+perm.getPermissionID()+" in all blocked security mode.");
+                }
+            }
             else
             {
-                throw new ScriptParseException("Unknown instruction: "+instruction+" (Line "+in.getLine()+")");
+                throw new ScriptParseException("Unknown instruction: "+instruction+" "+getInfo(in.getLine()));
             }
             return 0;
         }
@@ -362,6 +433,8 @@ public class Script
 
     private void download(String url, String dstPath) throws Exception
     {
+        if(!hasPermission(ScriptSecurity.Permissions.DOWNLOAD))
+            throw new ScriptSecurityException("Script "+scriptName+" tried to download without permission!");
         URL src = new URL(url);
         File dst = new File(dstPath);
         if(!dst.getParentFile().exists())
@@ -385,7 +458,21 @@ public class Script
         output.close();
         input.close();
     }
+    
+    private final void grantPermission(Permissions perm)
+    {
+        this.permissions |= 1 << perm.ordinal();
+    }
 
+    private final boolean hasPermission(Permissions perm)
+    {
+        if((permissions | (1 << perm.ordinal())) == permissions)
+        {
+            return true;
+        }
+        return securityMode == ScriptSecurity.Modes.ANARCHY;
+    }
+    
     private String format(String string)
     {
         if(listener != null)

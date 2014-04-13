@@ -1,0 +1,4 @@
+requestPermission "download"
+var test = "Lol"
+print $test
+println "Test Space"
